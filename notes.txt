@@ -1,0 +1,10 @@
+to zip things in windows:
+
+make sure you're in the same directory?
+use tar -a -c -f <name>.zip <folder location to zip>
+
+for python layers, folder structure should be:
+python/<libraries>
+
+for node folder structure, do:
+nodejs/<libraries

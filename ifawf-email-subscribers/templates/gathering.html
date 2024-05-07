@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: sans-serif;
+            text-align: center;
+            font-size: 20px;
+            
+        }
+
+        .greet {
+            padding: 40px;
+            font-size: 40px;
+            background: #212121;
+            color: white;
+        }
+
+        .content {
+            box-sizing: border-box;
+            padding: 20px 0;
+            text-align: center;
+        }
+
+        .content >* {
+            margin: 10px 0;
+        }
+
+        .question {
+            font-weight: bold;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 120px;
+        }
+
+        .intro {
+            font-size: 35px;
+        }
+        p {
+            margin: 0;
+            padding: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class='greet'>
+            <p>Indy Faith and Work Forum</p>
+        </div>
+        <div class="content">
+            <p class="intro">Come To Our Gathering on {{start_date}}!</p>
+        </div>
+        <div class="content">
+            <p class="question">When?</p>
+            <p class="answer">{{start_date}} at {{start_time}}</p>
+        </div>
+        <div class="content">
+            <p class="question">
+                Where?
+            </p>
+            <p class="answer">
+                {{location}}
+            </p>
+        </div>
+        <div class="content">
+            <p class="question">What Should I Expect?</p>
+            <p class="answer">{{extra_details}}</p>
+        </div>
+        <div class="footer">
+            <a href="#">Unsubscribe</a>
+        </div>
+    </div>
+</body>
+</html>
