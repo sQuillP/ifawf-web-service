@@ -40,10 +40,19 @@ function sendResponse(status, body) {
 
 async function validateToken(header) {
     try {
-        const secret = await getSecret();
-        const validToken = jwt.verify(header.token,secret);
+        const { secret } = JSON.parse(await getSecret());
+        console.log(header);
+        console.log("HEADER AUTH::: ", header.Authorization);
+        const splitToken = header.Authorization.split(' ');
+        if(splitToken.length !== 2 || splitToken[0].toLowerCase() !== 'bearer') {
+            console.log('should return false')
+            return false;
+        }
+        console.log("TOKEN ITSELF::: ",splitToken[1]);
+        const validToken = jwt.verify(splitToken[1],secret);
         return true;
     } catch(error) {
+        console.log(error, error.message)
         return false;
     }
 }
@@ -99,6 +108,12 @@ function validateRequest(expectedKeys, event) {
 async function changeUsername(event) {
     try {
         const body = JSON.parse(event.body);
+        if(validateRequest(['username'], body) === false) {
+            return BAD_REQUEST;
+        }
+        if(body.username.trim().length === 0) {
+            return BAD_REQUEST;
+        }
         const client = new DynamoDBClient({});
         const dynamo = DynamoDBDocumentClient.from(client);
 
@@ -118,14 +133,15 @@ async function changeUsername(event) {
         );
         
         console.log('after putResponse');
-
-        //Delete current instance since username is the primary key of the db item.
-        const deleteResponse = await dynamo.send(
-            new DeleteCommand({
-                Key: {username:currentAdminUser.username},
-                TableName:'ifawf-admin'
-            })
-        );
+        if(currentAdminUser.username !== body.username) {
+            //Delete current instance since username is the primary key of the db item.
+            const deleteResponse = await dynamo.send(
+                new DeleteCommand({
+                    Key: {username:currentAdminUser.username},
+                    TableName:'ifawf-admin'
+                })
+            );
+        }
         console.log('after deleteResponse');
         return sendResponse(200,{"data":"successfully updated user with username '"+body.username+"'"});
     } catch(error) {
@@ -139,11 +155,14 @@ async function changeUsername(event) {
  */
 async function changePassword(event) {
     try {
+        const body = JSON.parse(event.body);
+        if(validateRequest(['oldPassword', 'newPassword'], body) === false) {
+            return BAD_REQUEST;
+        }
         console.log('changing password');
         console.log('why is this not logging!');
         // Grab the current admin user
         const currentUser = await fetchAdminUser();
-        const body = JSON.parse(event.body);
         // Make sure that passwords match for doing this
         const validPassword = await bcrypt.compare(body.oldPassword, currentUser.password);
         console.log('validated password', validPassword)
@@ -182,7 +201,8 @@ async function changePassword(event) {
 export const handler = async (event, context)=> {
    try {
     const q = event.queryStringParameters;
-    if(validateToken(event.headers) === false){
+    if((await validateToken(event.headers)) === false){
+        console.log("RETURNING NOT AUTH");
         return NOT_AUTH;
    }else if(validateRequest(['event'],q) === false) {
         return BAD_REQUEST;
