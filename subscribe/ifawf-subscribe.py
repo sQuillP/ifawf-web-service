@@ -161,11 +161,22 @@ def delete_site_subscriber(event):
         Description: Remove user from the email list
     """
     body = json.loads(event['body'])
-    if validate_body(expected_keys=["email", ], event=body) == False:
+    if validate_body(expected_keys=["dateJoined"], event=body) == False:
         return BAD_REQUEST
     
+    removeResponse = dynamodb.Table('ifawf-subscribers').query(
+        IndexName='dateJoined-index',
+        KeyConditionExpression=Key('dateJoined').eq(body['dateJoined'])
+    )
+
+    print(removeResponse['Items'])
+    if len(removeResponse['Items']) == 0:
+        return send_response(status=200, body={"data":"User never existed"})
+    
+    user_to_remove = removeResponse['Items'][0]
+
     dynamodb.Table("ifawf-subscribers").delete_item(
-        Key=body
+        Key={'email':user_to_remove['email'], 'dateJoined':user_to_remove['dateJoined']}
     )
     
     return send_response(status=200, body={"data":"Successfully removed item from db."})
@@ -178,11 +189,21 @@ def delete_event_subscriber(event):
         one is here anyway. Let's just keep this plain
     """
     body = json.loads(event['body'])
-    if validate_body(expected_keys=["email",'eventid'], event=body) == False:
+    if validate_body(expected_keys=['dateJoined'], event=body) == False:
         return BAD_REQUEST
     
+    removeResponse = dynamodb.Table('ifawf-event-subscribers').query(
+        IndexName='dateJoined-index',
+        KeyConditionExpression=Key('dateJoined').eq(body['dateJoined'])
+    )
+
+    if len(removeResponse['Items']) == 0:
+        return send_response(200, body={"data":"User never existed"})
+
+    user_to_remove = removeResponse['Items'][0]
+    
     dynamodb.Table("ifawf-event-subscribers").delete_item(
-        Key=body
+        Key={"eventid":user_to_remove['eventid'], 'email':user_to_remove['email']}
     )
     
     return send_response(status=200, body={"data":"Successfully removed item from db."})
