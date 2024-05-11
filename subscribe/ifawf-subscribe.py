@@ -10,6 +10,19 @@ client = boto3.client('dynamodb',region_name='us-east-2')
 secret_client = boto3.client('secretsmanager')
 
 
+global_gathering_query = {
+    "TableName": "ifawf-gathering",
+    "KeyConditionExpression":"#main = :main",
+    "ScanIndexForward":False,
+    "ExpressionAttributeValues": {
+      ":main":"main"  
+    },
+    "ExpressionAttributeNames": {
+        "#main":"main"
+    },
+    "Limit": 1
+}
+
 def send_response(status, body):
     resp = {
         "isBase64Encoded": False,
@@ -27,7 +40,6 @@ def send_response(status, body):
     
 BAD_REQUEST = send_response(status=400, body={"data":"Invalid request body"})
 NOT_AUTH = send_response(status=401, body={"data":"Not authorized"})
-
 
 
 def validate_auth(event):
@@ -154,59 +166,6 @@ def create_event_subscriber(event):
         return BAD_REQUEST
     dynamodb.Table("ifawf-event-subscribers").put_item(Item=body)
     return send_response(status=200, body={"data":"Successfully subscribed to event"})
-
-
-def delete_site_subscriber(event):
-    """
-        Description: Remove user from the email list
-    """
-    body = json.loads(event['body'])
-    if validate_body(expected_keys=["dateJoined"], event=body) == False:
-        return BAD_REQUEST
-    
-    removeResponse = dynamodb.Table('ifawf-subscribers').query(
-        IndexName='dateJoined-index',
-        KeyConditionExpression=Key('dateJoined').eq(body['dateJoined'])
-    )
-
-    print(removeResponse['Items'])
-    if len(removeResponse['Items']) == 0:
-        return send_response(status=200, body={"data":"User never existed"})
-    
-    user_to_remove = removeResponse['Items'][0]
-
-    dynamodb.Table("ifawf-subscribers").delete_item(
-        Key={'email':user_to_remove['email'], 'dateJoined':user_to_remove['dateJoined']}
-    )
-    
-    return send_response(status=200, body={"data":"Successfully removed item from db."})
-
-
-def delete_event_subscriber(event):
-    """
-        Description: Remove user from the email list
-        NOTE: this is definitely identical to the other delete function but this second
-        one is here anyway. Let's just keep this plain
-    """
-    body = json.loads(event['body'])
-    if validate_body(expected_keys=['dateJoined'], event=body) == False:
-        return BAD_REQUEST
-    
-    removeResponse = dynamodb.Table('ifawf-event-subscribers').query(
-        IndexName='dateJoined-index',
-        KeyConditionExpression=Key('dateJoined').eq(body['dateJoined'])
-    )
-
-    if len(removeResponse['Items']) == 0:
-        return send_response(200, body={"data":"User never existed"})
-
-    user_to_remove = removeResponse['Items'][0]
-    
-    dynamodb.Table("ifawf-event-subscribers").delete_item(
-        Key={"eventid":user_to_remove['eventid'], 'email':user_to_remove['email']}
-    )
-    
-    return send_response(status=200, body={"data":"Successfully removed item from db."})
     
     
 def handle_get(query, event):
@@ -233,19 +192,91 @@ def handle_post(query, event):
         return create_event_subscriber(event)
     else:
         return BAD_REQUEST
+
+
+def get_subscriber_email(dateJoined):
+    """
+        Description: Extract the subscribers email address from any 
+        of the existing tables using gsi dateJoined.
+        Returns:
+            email:str|None - email of the user that is shared in both tables.
+            None if there is no matching datejoined user.
+            
+    """
+    dbTables = ['ifawf-event-subscribers','ifawf-subscribers']
+    for table in dbTables:
+        subscriberResponse = dynamodb.Table(table).query(
+            IndexName='dateJoined-index',
+            KeyConditionExpression=Key('dateJoined').eq(dateJoined)
+        )
+        if len(subscriberResponse['Items']) != 0:
+            return subscriberResponse['Items'][0]['email']
+    return None
+
+
+def handle_delete(event):
+    """
+        Description: When endpoint gets hit, we will remove a site subscriber from 
+        site and event notifications.
+    """
+    body = json.loads(event['body'])
+
+    # Make sure that dateJoined keyword is specified. This is used as gsi
+    # lookup for deleting the user.
+    if validate_body(expected_keys=['dateJoined'], event=body) == False:
+        return BAD_REQUEST
     
+    user_email = get_subscriber_email(body['dateJoined'])
+
+    if user_email is None:
+        return send_response(status=204, body={"data":"no such user exists"})
+    
+    fetch_email_user_query = {
+        "TableName": "ifawf-subscribers",
+        "KeyConditionExpression":"#email = :email",
+        "ScanIndexForward":False,
+        "ExpressionAttributeValues": {
+        ":email":user_email,  
+        },
+        "ExpressionAttributeNames": {
+            "#email":"email"
+        },
+        "Limit": 1
+    }
+
+    # We first fetch the site subscribers
+    fetched_user = dynamodb.Table('ifawf-subscribers').query(**fetch_email_user_query)
+
+    # Remove the site subscriber if possible
+    if len(fetched_user['Items']) != 0:
+        user = fetched_user['Items'][0]
+        print(user)
+        deleteResponse = dynamodb.Table('ifawf-subscribers').delete_item(
+            Key={"email":user['email'], "dateJoined":user['dateJoined']}
+        )
+    
+    # Fetch the global gathering query to extract part of the primary key
+    fetched_event = dynamodb.Table('ifawf-event-subscribers').query(**global_gathering_query)
+
+    # Remove event subscriber if possible
+    if len(fetched_event['Items']) != 0:
+        deleteResponse = dynamodb.Table('ifawf-event-subscribers').delete_item(
+            Key={"email":user_email, "eventid":fetched_event['Items'][0]['created']}
+        )
+
+    return send_response(status=200, body={"data":"Successfully removed subscriber from all channels"})
 
 
-def handle_delete(query, event):
-    if query is None or 'type' not in query:
-        return BAD_REQUEST
-    # Possibly check if user has a permanent auth token.
-    if query['type'] == 'all':
-        return delete_site_subscriber(event)
-    elif query['type'] == "event":
-        return delete_event_subscriber(event)
-    else:
-        return BAD_REQUEST
+# def handle_delete(query, event):
+#     if query is None or 'type' not in query:
+#         return BAD_REQUEST
+#     # Possibly check if user has a permanent auth token.
+#     if query['type'] == 'all':
+#         return delete_site_subscriber(event)
+#     elif query['type'] == "event":
+#         return delete_event_subscriber(event)
+#     else:
+#         return BAD_REQUEST
 
 def lambda_handler(event, context):
     q = event['queryStringParameters']
@@ -255,7 +286,7 @@ def lambda_handler(event, context):
         elif event['httpMethod'] == 'POST':
             return handle_post(q, event)
         elif event['httpMethod'] == 'DELETE':
-            return handle_delete(q, event)
+            return handle_delete(event=event)
         else:
             raise Exception("something wrong")
     except Exception as e:

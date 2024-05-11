@@ -179,7 +179,7 @@ def send_ses_message_email(mail_list, email_message,queryParam):
         Description: Calls boto3 ses api for sending emails to many users.
     """
 
-    template_data ={"email_message":email_message, "unsubscribe_link":f"http://localhost:3000/unsubscribe?type={queryParam}"}
+    template_data ={"email_message":email_message, "unsubscribe_link":f"http://localhost:3000/unsubscribe"}
     ses.send_templated_email(
         Source=SOURCE_EMAIL,
         Destination={
@@ -191,15 +191,16 @@ def send_ses_message_email(mail_list, email_message,queryParam):
     )
 
 
-def send_ses_unsubscribe_email(to_user, param):
+def send_ses_unsubscribe_email(to_user):
     """
         Description: send email to actually subscribe and hit the endpoint.
+        use dateJoined as the PRIMARY KEY TO LOOKUP EACH USER IN THE TABLE.
     """
     
 
-    template_data = {"unsubscribe_link": f"http://localhost:3000/unsubscribe/{to_user['dateJoined']}?type={param}"}
+    template_data = {"unsubscribe_link": f"http://localhost:3000/unsubscribe/{to_user['dateJoined']}"}
     
-    ses.send_template_email(
+    ses.send_templated_email(
         Source=SOURCE_EMAIL,
         Destination={
             "ToAddresses":[SOURCE_EMAIL]
@@ -207,7 +208,6 @@ def send_ses_unsubscribe_email(to_user, param):
         Template=UNSUBSCRIBE_TEMPLATE,
         TemplateData=json.dumps(template_data)
     )
-    pass
 
     return send_response(status=200, body={"data":"Successfully sent unsubscribe email"})
     
@@ -227,7 +227,7 @@ def send_ses_event_email(gathering, mail_list):
         "start_time":f"{get_formatted_hour(gathering['date'])[:-2]}", #"7pm",
         "end_time":f"{get_formatted_hour(gathering['timeEnd'])}",#9pm
         "extra_details":f"{gathering['extraRequests']}",#"Food and drinks will be provided."
-        "unsubscribe_link":"http://localhost:3000/unsubscribe?type=all"
+        "unsubscribe_link":"http://localhost:3000/unsubscribe"#Direct them to unsubscribe portal
     }
 
 
@@ -273,49 +273,57 @@ def event_notify():
 
     
 def email_unsubscribe(event):
-    q = event['queryStringParameters']
+    """
+        Description: find the user in either of the tables.
+        User will enter their email in the unsubscribe box and this endpoint 
+        function will be triggered. A confirmation email will be sent to redirect the user
+        to a site endpoint which will then call the unsubscribe endpoint which will then 
+        remove the user from all forms of communication.
+    """
     body = json.loads(event['body'])
-
-    if validate_body(expected_keys=['type', 'email'],body=body) == False:
+    if validate_body(expected_keys=['email'], event=body) == False:
         return BAD_REQUEST
     
     fetch_email_user_query = {
-        "TableName": "ifawf-gathering",
-        "KeyConditionExpression":"#main = :main",
+        "TableName": "ifawf-subscribers",
+        "KeyConditionExpression":"#email = :email",
         "ScanIndexForward":False,
         "ExpressionAttributeValues": {
-        ":main":body['email'],  
+        ":email":body['email'],  
         },
         "ExpressionAttributeNames": {
-            "#main":"email"
+            "#email":"email"
         },
         "Limit": 1
     }
+
+    # Fetch the user and check if they exist in the site subscribers table. If so, send them an email from here
+    fetched_user = dynamodb.Table('ifawf-subscribers').query(**fetch_email_user_query)
+    if len(fetched_user['Items']) != 0:
+        return send_ses_unsubscribe_email(to_user=fetched_user['Items'][0])
     
 
-    table = 'ifawf-event-subscribers'
-    if body['type'] == 'all':
-        table ='ifawf-subscribers'
-    fetched_user = None
-    param = None
-    
-    if table == 'ifawf-subscribers':
-        fetched_user = dynamodb.Table(table).query(**fetch_email_user_query)
-        param='all'
+    # IF the user does not have site subscription, check if they are subscribed to an event.
+    # if so, then send them an email to unsubscribe to the event.
+    # Grab the event as primary key for the event subscriber table.
+    fetched_event = dynamodb.Table('ifawf-gathering').query(**global_gathering_query)
+    if len(fetched_event['Items']) == 0:
+        return send_response(status=204, body={"data":"No current event"})
+    current_event = fetched_event['Items'][0]
 
-    else:
-        param='event'
-        fetched_event = dynamodb.Table('ifawf-gathering').query(**global_gathering_query)
-        if len(fetched_event['Items']) == 0:
-            return send_response(status=200,body={"data":"Event does not exist"})#BAD request??
-        event = fetched_event['Items'][0]
-        fetched_user = dynamodb.Table(table).get_item(
-            Key={'eventid':fetched_event['Items'][0]['created'], 'email':body['email']}
-        )
-    if len(fetched_user['Items']) == 0:
-        return send_response(status=204, body={"data":"No email found"})
-        
-    return send_ses_unsubscribe_email(fetched_user['Items'][0],param=param)
+    # Now we fetch the user with the primary key taken from the current event
+    fetched_user = dynamodb.Table('ifawf-event-subscribers').get_item(
+        Key={'eventid':current_event['created'], 'email':body['email']}
+    )
+
+    # if user does not exist in events table, send 204 since they don't exist.
+    if 'Item' not in fetched_user:
+        return send_response(status=204, body={"data":"User does not exist"})
+    
+    # Send the unsubscribe email to the user
+    return send_ses_unsubscribe_email(to_user=fetched_user['Item'])
+    
+
 
 
 def email_subscribers(event,table):
@@ -367,6 +375,7 @@ def lambda_handler(event, context):
         if q['type'] == 'unsubscribe':
             return email_unsubscribe(event=event)
         
+        # Any further action the user must be unsubscribed.
         if validate_auth(event['headers']) == False:
             return NOT_AUTH
         print("EVENT", event)
@@ -381,5 +390,6 @@ def lambda_handler(event, context):
             return event_notify()
         else:
             return BAD_REQUEST
-    except:
+    except Exception as e:
+        print(e)
         return send_response(500,{"data":"Internal Server error"})
