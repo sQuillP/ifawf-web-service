@@ -191,13 +191,13 @@ def send_ses_message_email(mail_list, email_message,queryParam):
     )
 
 
-def send_ses_unsubscribe_email(to_user):
+def send_ses_unsubscribe_email(to_user, param):
     """
         Description: send email to actually subscribe and hit the endpoint.
     """
     
 
-    template_data = {"unsubscribe_link": f"http://localhost:3000/unsubscribe/{to_user['dateJoined']}"}
+    template_data = {"unsubscribe_link": f"http://localhost:3000/unsubscribe/{to_user['dateJoined']}?type={param}"}
     
     ses.send_template_email(
         Source=SOURCE_EMAIL,
@@ -295,14 +295,16 @@ def email_unsubscribe(event):
 
     table = 'ifawf-event-subscribers'
     if body['type'] == 'all':
-        table ='ifawf-susbcribers'
+        table ='ifawf-subscribers'
     fetched_user = None
-
+    param = None
     
     if table == 'ifawf-subscribers':
         fetched_user = dynamodb.Table(table).query(**fetch_email_user_query)
+        param='all'
 
     else:
+        param='event'
         fetched_event = dynamodb.Table('ifawf-gathering').query(**global_gathering_query)
         if len(fetched_event['Items']) == 0:
             return send_response(status=200,body={"data":"Event does not exist"})#BAD request??
@@ -313,7 +315,7 @@ def email_unsubscribe(event):
     if len(fetched_user['Items']) == 0:
         return send_response(status=204, body={"data":"No email found"})
         
-    return send_ses_unsubscribe_email(fetched_user['Items'][0])
+    return send_ses_unsubscribe_email(fetched_user['Items'][0],param=param)
 
 
 def email_subscribers(event,table):
