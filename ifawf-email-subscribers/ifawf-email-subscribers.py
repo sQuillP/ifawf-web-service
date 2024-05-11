@@ -128,6 +128,9 @@ NOT_AUTH = send_response(status=401, body={"data":"Not authorized"})
 SOURCE_EMAIL="indyfaithandworkforum@gmail.com"
 MESSAGE_TEMPLATE="Email_all_subscribers"
 NOTIFY_TEMPLATE="notify_new_event"
+UNSUBSCRIBE_TEMPLATE='ifawf_unsubscribe'
+BASE_URL='http://indyfaithandworkforum.org'
+
 
 
 def validate_auth(event):
@@ -167,10 +170,12 @@ def validate_body(expected_keys, event):
 # We also want emails to be sent out when admin wants to let subscribers/site subscribers know any updates/news.
 
 
-def send_ses_message_email(mail_list, email_message):
+def send_ses_message_email(mail_list, email_message,queryParam):
     """
         Description: Calls boto3 ses api for sending emails to many users.
     """
+
+    template_data ={"email_message":email_message, "unsubscribe_link":f"http://localhost:3000/unsubscribe?type={queryParam}"}
     ses.send_templated_email(
         Source=SOURCE_EMAIL,
         Destination={
@@ -178,9 +183,28 @@ def send_ses_message_email(mail_list, email_message):
         },
         ReplyToAddresses=[SOURCE_EMAIL],
         Template=MESSAGE_TEMPLATE,
-        TemplateData=json.dumps({"email_message":email_message})
+        TemplateData=json.dumps(template_data)
     )
 
+
+def send_ses_unsubscribe_email(to_user):
+    """
+        Description: send email to actually subscribe and hit the endpoint.
+    """
+    
+
+    template_data = {"unsubscribe_link": f"http://localhost:3000/unsubscribe/{to_user['dateJoined']}"}
+    
+    ses.send_template_email(
+        Source=SOURCE_EMAIL,
+        Destination={
+            "ToAddresses":[SOURCE_EMAIL]
+        },
+        Template=UNSUBSCRIBE_TEMPLATE,
+        TemplateData=json.dumps(template_data)
+    )
+    pass
+    
 
 def send_ses_event_email(gathering, mail_list):
     """
@@ -189,19 +213,22 @@ def send_ses_event_email(gathering, mail_list):
     """
     # NOTE: Please format the date accordingly
     start_date = datetime.fromisoformat(gathering['date'])
-    time_end = datetime.fromisoformat(gathering['timeEnd'])
+    destination_addresses = map(lambda user: user['email'], mail_list)
 
     template_data={
         "start_date":f"{days[start_date.weekday()]}, {months[start_date.month-1]} {start_date.day}",#"Friday, May 14", 
         "location":f"{gathering['location']}",#"117 West Windsor Ave, Lombard IL", 
         "start_time":f"{get_formatted_hour(gathering['date'])[:-2]}", #"7pm",
         "end_time":f"{get_formatted_hour(gathering['timeEnd'])}",#9pm
-        "extra_details":f"{gathering['extraRequests']}"#"Food and drinks will be provided."
+        "extra_details":f"{gathering['extraRequests']}",#"Food and drinks will be provided."
+        "unsubscribe_link":"http://localhost:3000/unsubscribe?type=all"
     }
+
+
     ses.send_templated_email(
         Source=SOURCE_EMAIL,
         Destination={
-            "ToAddresses":[SOURCE_EMAIL]
+            "ToAddresses":[SOURCE_EMAIL] #destination_addresses
         },
         ReplyToAddresses=[SOURCE_EMAIL],
         Template=NOTIFY_TEMPLATE,
@@ -211,7 +238,7 @@ def send_ses_event_email(gathering, mail_list):
 
 def event_notify():
     """
-        Description: Notify all site subscribers about EVENT that is happening.
+        Description: Notify ALL site subscribers about EVENT that is happening.
     """
     gathering_response = dynamodb.Table('ifawf-gathering').query(**global_gathering_query)
     gathering = gathering_response['Items'][0]
@@ -220,7 +247,7 @@ def event_notify():
     )
     email_list = []
     for user in site_subscribers_response['Items']:
-        email_list.append(user['email'])
+        email_list.append(user)
     
     send_ses_event_email(gathering=gathering, mail_list=email_list)
 
@@ -254,8 +281,14 @@ def email_subscribers(event,table):
     for user in subscribers_response['Items']:
         email_list.append(user['email'])
     
-    print(email_list)
-    send_ses_message_email(mail_list=email_list, email_message="From aws lambda")
+    queryParam = 'all'
+
+    if table=='ifawf-event-subscribers':
+        queryParam='event'
+
+    body=json.loads(event['body'])
+
+    send_ses_message_email(mail_list=email_list, email_message=body['message'], queryParam=queryParam)
     # Paginate the body if there are still more emails to be sent out.
     while 'LastEvaluatedKey' in subscribers_response:
         email_list = []
@@ -268,7 +301,7 @@ def email_subscribers(event,table):
             email_list.append(user['email'])
         print(email_list)
         if len(email_list) > 0:
-            send_ses_message_email(mail_list=email_list, email_message="From aws lambda")
+            send_ses_message_email(mail_list=email_list, email_message=body['message'], queryParam=queryParam)
     
     return send_response(status=200, body={"data":"Successfully notified users!"})
 
@@ -277,19 +310,22 @@ def lambda_handler(event, context):
     """
         
     """
-    if validate_auth(event['headers']) == False:
-        return NOT_AUTH
-    print("EVENT", event)
-    if 'type' not in event['queryStringParameters']:
-        return BAD_REQUEST
-    q = event['queryStringParameters']
-    if q['type'] == 'all':
-        print('emailing ALL subscribers (ifawf-subscribers)')
-        return email_subscribers(event, 'ifawf-subscribers')
-    elif q['type'] == 'event':
-        print('emailing EVENT subscribers (ifawf-event-subscribers)')
-        return email_subscribers(event, 'ifawf-event-subscribers')
-    elif q['type'] == 'event-notify':
-        return event_notify()
-    else:
-        return BAD_REQUEST
+    try:
+        if validate_auth(event['headers']) == False:
+            return NOT_AUTH
+        print("EVENT", event)
+        if 'type' not in event['queryStringParameters']:
+            return BAD_REQUEST
+        q = event['queryStringParameters']
+        if q['type'] == 'all':
+            print('emailing ALL subscribers (ifawf-subscribers)')
+            return email_subscribers(event, 'ifawf-subscribers')
+        elif q['type'] == 'event':
+            print('emailing EVENT subscribers (ifawf-event-subscribers)')
+            return email_subscribers(event, 'ifawf-event-subscribers')
+        elif q['type'] == 'event-notify':
+            return event_notify()
+        else:
+            return BAD_REQUEST
+    except:
+        return send_response(500,{"data":"Internal Server error"})
