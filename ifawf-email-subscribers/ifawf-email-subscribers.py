@@ -111,6 +111,10 @@ global_gathering_query = {
     "Limit": 1
 }
 
+
+
+
+
 def send_response(status, body):
     resp = {
         "isBase64Encoded": False,
@@ -204,6 +208,8 @@ def send_ses_unsubscribe_email(to_user):
         TemplateData=json.dumps(template_data)
     )
     pass
+
+    return send_response(status=200, body={"data":"Successfully sent unsubscribe email"})
     
 
 def send_ses_event_email(gathering, mail_list):
@@ -266,7 +272,48 @@ def event_notify():
 
 
     
+def email_unsubscribe(event):
+    q = event['queryStringParameters']
+    body = json.loads(event['body'])
 
+    if validate_body(expected_keys=['type', 'email'],body=body) == False:
+        return BAD_REQUEST
+    
+    fetch_email_user_query = {
+        "TableName": "ifawf-gathering",
+        "KeyConditionExpression":"#main = :main",
+        "ScanIndexForward":False,
+        "ExpressionAttributeValues": {
+        ":main":body['email'],  
+        },
+        "ExpressionAttributeNames": {
+            "#main":"email"
+        },
+        "Limit": 1
+    }
+    
+
+    table = 'ifawf-event-subscribers'
+    if body['type'] == 'all':
+        table ='ifawf-susbcribers'
+    fetched_user = None
+
+    
+    if table == 'ifawf-subscribers':
+        fetched_user = dynamodb.Table(table).query(**fetch_email_user_query)
+
+    else:
+        fetched_event = dynamodb.Table('ifawf-gathering').query(**global_gathering_query)
+        if len(fetched_event['Items']) == 0:
+            return send_response(status=200,body={"data":"Event does not exist"})#BAD request??
+        event = fetched_event['Items'][0]
+        fetched_user = dynamodb.Table(table).get_item(
+            Key={'eventid':fetched_event['Items'][0]['created'], 'email':body['email']}
+        )
+    if len(fetched_user['Items']) == 0:
+        return send_response(status=204, body={"data":"No email found"})
+        
+    return send_ses_unsubscribe_email(fetched_user['Items'][0])
 
 
 def email_subscribers(event,table):
@@ -311,12 +358,17 @@ def lambda_handler(event, context):
         
     """
     try:
-        if validate_auth(event['headers']) == False:
-            return NOT_AUTH
-        print("EVENT", event)
         if 'type' not in event['queryStringParameters']:
             return BAD_REQUEST
         q = event['queryStringParameters']
+        
+        if q['type'] == 'unsubscribe':
+            return email_unsubscribe(event=event)
+        
+        if validate_auth(event['headers']) == False:
+            return NOT_AUTH
+        print("EVENT", event)
+        
         if q['type'] == 'all':
             print('emailing ALL subscribers (ifawf-subscribers)')
             return email_subscribers(event, 'ifawf-subscribers')
