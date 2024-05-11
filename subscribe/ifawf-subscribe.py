@@ -139,7 +139,52 @@ def get_event_subscribers(query):
         "ExclusiveStartKey": LastEvaluatedKey
     }
     return send_response(status=200, body=response_data)
+
+
+def already_exists(email, table):
+    """
+        Description: Return true if email already exists in the database.
+        We have to manually check this since email is not standalone partition key.
+    """
+
+    fetch_email_user_query = {
+        "TableName": "ifawf-subscribers",
+        "KeyConditionExpression":"#email = :email",
+        "ScanIndexForward":False,
+        "ExpressionAttributeValues": {
+        ":email":email,  
+        },
+        "ExpressionAttributeNames": {
+            "#email":"email"
+        },
+        "Limit": 1
+    }
+
+    # Check if there is a user with same email in site subscribers table.
+    if table =='ifawf-subscribers':
+        site_response = dynamodb.Table(table).query(**fetch_email_user_query)
+
+        # True if there exists a user in the site subscribers table.
+        return len(site_response['Items']) != 0
+
+    # Check if there is a user with the same email in the event subscribers table.
+    elif table == 'ifawf-event-subscribers':
+        event_response = dynamodb.Table('ifawf-gathering').query(**global_gathering_query)
+
+        # This case would probably never be true
+        if len(event_response['Items']) == 0:
+            return False
+        
+        event = event_response['Items'][0]
+        event_sub_response = dynamodb.Table(table).get_item(
+            Key={'eventid':event['created'], 'email':email}
+        )
+
+        # True if user exists in event subscriber table
+        return 'Item' in event_sub_response
     
+    else:
+        raise Exception("Invalid table name")
 
 def create_site_subscriber(event):
     """
@@ -149,6 +194,10 @@ def create_site_subscriber(event):
     body = json.loads(event['body'])
     if validate_body(expected_keys=['email','firstName','lastName', 'dateJoined'], event=body) == False:
         return BAD_REQUEST
+    
+    if already_exists(body['email'], 'ifawf-subscribers') == True:
+        return send_response(status=200, body={"data":"User site subscriber already exists!"})
+    
     dynamodb.Table('ifawf-subscribers').put_item(
         Item=body
     )
@@ -161,9 +210,12 @@ def create_event_subscriber(event):
         ongoing event.
     """
     body = json.loads(event['body'])
-    
     if validate_body(expected_keys=['eventid','email','firstName',"lastName", 'dateJoined'],event=body) == False:
         return BAD_REQUEST
+    
+    if already_exists(body['email'], 'ifawf-event-subscribers') == True:
+        return send_response(status=200, body={"data":"User event subscriber already exists!"})
+
     dynamodb.Table("ifawf-event-subscribers").put_item(Item=body)
     return send_response(status=200, body={"data":"Successfully subscribed to event"})
     
