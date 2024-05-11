@@ -66,20 +66,67 @@ def get_event():
     }
 
 
+def delete_all_event_subscribers():
+
+    # Scan through all users
+    event_sub_response = dynamodb.Table('ifawf-event-subscribers').scan(
+        Limit=100
+    )
+
+    # Delete each user
+    for user_to_delete in event_sub_response['Items']:
+            dynamodb.Table('ifawf-event-subscribers').delete_item(
+                Key={'email':user_to_delete['email'], 'eventid':user_to_delete['eventid']}
+            )
+    
+    # While there are still items to be left paginating
+    while "LastEvaluatedKey" in event_sub_response:
+
+        # Get pagination key
+        last_key = event_sub_response['LastEvaluatedKey']
+
+        # Scan and grab 100 users
+        event_sub_response = dynamodb.Table('ifawf-event-subscribers').scan(
+            Limit=100,
+            ExclusiveStartKey=last_key
+        )
+
+        # Delete each user
+        for user_to_delete in event_sub_response['Items']:
+            dynamodb.Table('ifawf-event-subscribers').delete_item(
+                Key={'email':user_to_delete['email'], 'eventid':user_to_delete['eventid']}
+            )
+    
+    print("All event subscribers have been deleted...")
+        
+
 
 def update_event(event, method):
     status=200
+    print("EVENT:::",event)
     if validate_auth(event) == False:
         return UNAUTHORIZED
-    elif validate_body(expected_keys=['main','created','date','location','timeEnd'],event=event) == False:
+    elif validate_body(expected_keys=['main','created','date','location','timeEnd','extraRequests'],event=event) == False:
         return BAD_REQUEST
     else:
-        table.put_item(
-            TableName='ifawf-gathering',
+        print('updating table')
+        
+        table.delete_item(
+            Key={
+                'created':event['body']['created'],
+                'main':'main'
+            }
+        )
+        res = table.put_item(
             Item=event['body']
         )
+
         if method =='POST':
+            # Handle logic for deleting all subscribers to the current gathering.
+            delete_all_event_subscribers()
             status = 201
+
+        print('res',res)
         updated_table = table.query(**global_gathering_query)
         return {
             "status":status,
@@ -97,6 +144,8 @@ def delete_event(event):
             Key=event['body']
         )
         updated_items = table.query(**global_gathering_query)
+        # Delete all event subscribers since we don't want floating data.
+        delete_all_event_subscribers()
         return {
             "status":200,
             "data": updated_items['Items']

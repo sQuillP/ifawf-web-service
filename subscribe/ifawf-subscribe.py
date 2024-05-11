@@ -218,6 +218,9 @@ def handle_delete(event):
     """
         Description: When endpoint gets hit, we will remove a site subscriber from 
         site and event notifications.
+        * Get the users email
+        * Query all channel tables using users email
+        * Delete user in each table using email as a partition/sort key
     """
     body = json.loads(event['body'])
 
@@ -266,17 +269,6 @@ def handle_delete(event):
 
     return send_response(status=200, body={"data":"Successfully removed subscriber from all channels"})
 
-
-# def handle_delete(query, event):
-#     if query is None or 'type' not in query:
-#         return BAD_REQUEST
-#     # Possibly check if user has a permanent auth token.
-#     if query['type'] == 'all':
-#         return delete_site_subscriber(event)
-#     elif query['type'] == "event":
-#         return delete_event_subscriber(event)
-#     else:
-#         return BAD_REQUEST
 
 def lambda_handler(event, context):
     q = event['queryStringParameters']
