@@ -120,6 +120,11 @@ def send_response(status, body):
         "isBase64Encoded": False,
         "statusCode": status,
         "headers": {
+            "Content-Type" : "application/json",
+            "Access-Control-Allow-Origin" : "*",
+            "Allow" : "GET, OPTIONS, POST",
+            "Access-Control-Allow-Methods" : "GET, OPTIONS, POST",
+            "Access-Control-Allow-Headers" : "*"
         },
         "body": json.dumps(body)
     }

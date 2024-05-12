@@ -213,9 +213,17 @@ def create_event_subscriber(event):
     if validate_body(expected_keys=['eventid','email','firstName',"lastName", 'dateJoined'],event=body) == False:
         return BAD_REQUEST
     
+    event_response = dynamodb.Table('ifawf-gathering').query(**global_gathering_query)
+
+    # Check for existence of an event.
+    if len(event_response['Items']) == 0 or body['eventid'] != event_response['Items'][0]['created']:
+        return send_response(status=204, body={"data":"Event does not even exist"})
+    
+    # Check for user already existing with the same email.
     if already_exists(body['email'], 'ifawf-event-subscribers') == True:
         return send_response(status=200, body={"data":"User event subscriber already exists!"})
-
+    
+    # Add user to the evnet subscription
     dynamodb.Table("ifawf-event-subscribers").put_item(Item=body)
     return send_response(status=200, body={"data":"Successfully subscribed to event"})
     
