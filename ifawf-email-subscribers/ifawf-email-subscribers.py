@@ -146,7 +146,7 @@ BASE_URL='http://indyfaithandworkforum.org'
 UNSUBSCRIBE_URL='https://indyfaithandworkforum.org/unsubscribe'
 
 #sendgrid configuration
-SENDGRID_API_KEY = ''
+SENDGRID_API_KEY = 'You thought lol'
 SENDGRID_EVENT_TEMPLATE_ID = 'd-89e760648294447b9aac0fc1142206a5'
 SENDGRID_NOTIFICATION_TEMPLATE_ID = "d-aacda58488294a4a8230d404d809cbfe"
 SENDGRID_UNSUBSCRIBE_TEMPLATE_ID = 'd-cc7711ec75a442a393c4699037d9f957'
@@ -238,9 +238,11 @@ def send_sendgrid_event_email(gathering, mail_list):
         This is only for when NEW EVENTS are created, we want to notify all subscribed users of the newly created event.
     """
     # NOTE: Please format the date accordingly
+    print('in send_sendgrid_event_email')
     start_date = datetime.fromisoformat(gathering['date'])
-    destination_addresses = map(lambda user: user['email'], mail_list)
-
+    destination_addresses = list(map(lambda user: To(user['email']), mail_list))
+    print('before template_data')
+    
     template_data={
         "start_date":f"{days[start_date.weekday()]}, {months[start_date.month-1]} {start_date.day}",#"Friday, May 14", 
         "location":f"{gathering['location']}",#"117 West Windsor Ave, Lombard IL", 
@@ -249,10 +251,12 @@ def send_sendgrid_event_email(gathering, mail_list):
         "extra_details":f"{gathering['extraRequests']}",#"Food and drinks will be provided."
         "unsubscribe_link":UNSUBSCRIBE_URL#Direct them to unsubscribe portal
     }
+    print('template data', destination_addresses)
+
 
     message = Mail(
         from_email=SOURCE_EMAIL,
-        to_emails=list(map(To, mail_list)),
+        to_emails=destination_addresses
     )
     message.dynamic_template_data = template_data
     message.template_id = SENDGRID_EVENT_TEMPLATE_ID
@@ -260,12 +264,14 @@ def send_sendgrid_event_email(gathering, mail_list):
     sendgrid_client = SendGridAPIClient(SENDGRID_API_KEY)
     response = sendgrid_client.send(message)
 
+    print('sent emails')
 
 
 def event_notify():
     """
         Description: Notify ALL site subscribers about EVENT that is happening.
     """
+    print('in event notify')
     gathering_response = dynamodb.Table('ifawf-gathering').query(**global_gathering_query)
     gathering = gathering_response['Items'][0]
     site_subscribers_response = dynamodb.Table('ifawf-subscribers').scan(
@@ -275,6 +281,7 @@ def event_notify():
     for user in site_subscribers_response['Items']:
         email_list.append(user)
     
+    print('email_list', email_list)
     send_sendgrid_event_email(gathering=gathering, mail_list=email_list)
 
     while "LastEvaluatedKey" in site_subscribers_response:
@@ -413,5 +420,5 @@ def lambda_handler(event, context):
         else:
             return BAD_REQUEST
     except Exception as e:
-        print(e)
+        print(str(e), "Sending 500 response")
         return send_response(500,{"data":"Internal Server error"})
