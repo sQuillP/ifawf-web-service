@@ -6,5 +6,8 @@ use tar -a -c -f <name>.zip <folder location to zip>
 for python layers, folder structure should be:
 python/<libraries>
 
+for installing python packages in a layer do 
+pip install sendgrid --target python/lib/python3.x/site-packages/
+
 for node folder structure, do:
 nodejs/<libraries

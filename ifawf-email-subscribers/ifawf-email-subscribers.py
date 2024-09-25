@@ -2,6 +2,9 @@ import json
 import boto3
 import jwt
 from datetime import datetime, date, timedelta
+import os
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import *
 
 
 ses = boto3.client('ses')
@@ -133,12 +136,20 @@ def send_response(status, body):
 BAD_REQUEST = send_response(status=400, body={"data":"Invalid request body"})
 NOT_AUTH = send_response(status=401, body={"data":"Not authorized"})
 
-# SES config
+# SES config (deprecated)
 SOURCE_EMAIL="indyfaithandworkforum@gmail.com"
 MESSAGE_TEMPLATE="Email_all_subscribers"
 NOTIFY_TEMPLATE="notify_new_event"
 UNSUBSCRIBE_TEMPLATE='ifawf_unsubscribe'
 BASE_URL='http://indyfaithandworkforum.org'
+
+UNSUBSCRIBE_URL='https://indyfaithandworkforum.org/unsubscribe'
+
+#sendgrid configuration
+SENDGRID_API_KEY = ''
+SENDGRID_EVENT_TEMPLATE_ID = 'd-89e760648294447b9aac0fc1142206a5'
+SENDGRID_NOTIFICATION_TEMPLATE_ID = "d-aacda58488294a4a8230d404d809cbfe"
+SENDGRID_UNSUBSCRIBE_TEMPLATE_ID = 'd-cc7711ec75a442a393c4699037d9f957'
 
 
 
@@ -179,45 +190,49 @@ def validate_body(expected_keys, event):
 # We also want emails to be sent out when admin wants to let subscribers/site subscribers know any updates/news.
 
 
-def send_ses_message_email(mail_list, email_message,queryParam):
+def send_sendgrid_broadcast_email(mail_list, email_message,queryParam):
     """
-        Description: Calls boto3 ses api for sending emails to many users.
+        Description: This will send an email with a message coming from the admin that will reach a particular
+        audience.
     """
 
-    template_data ={"email_message":email_message, "unsubscribe_link":f"http://localhost:3000/unsubscribe"}
-    ses.send_templated_email(
-        Source=SOURCE_EMAIL,
-        Destination={
-            "ToAddresses":[SOURCE_EMAIL]
-        },
-        ReplyToAddresses=[SOURCE_EMAIL],
-        Template=MESSAGE_TEMPLATE,
-        TemplateData=json.dumps(template_data)
+    template_data ={"email_message":email_message, "unsubscribe_link":UNSUBSCRIBE_URL}
+    
+    print(mail_list)
+    message = Mail(
+        from_email=SOURCE_EMAIL,
+        to_emails=list(map(To, mail_list)),
     )
+    message.dynamic_template_data = template_data
+    message.template_id = SENDGRID_NOTIFICATION_TEMPLATE_ID
 
+    sendgrid_client = SendGridAPIClient(SENDGRID_API_KEY)
+    response = sendgrid_client.send(message)
 
-def send_ses_unsubscribe_email(to_user):
+def send_sendgrid_unsubscribe_email(to_user):
     """
         Description: send email to actually subscribe and hit the endpoint.
         use dateJoined as the PRIMARY KEY TO LOOKUP EACH USER IN THE TABLE.
     """
     
 
-    template_data = {"unsubscribe_link": f"http://localhost:3000/unsubscribe/{to_user['dateJoined']}"}
+    template_data = {"unsubscribe_link": f"{UNSUBSCRIBE_URL}/{to_user['dateJoined']}"}
     
-    ses.send_templated_email(
-        Source=SOURCE_EMAIL,
-        Destination={
-            "ToAddresses":[SOURCE_EMAIL]
-        },
-        Template=UNSUBSCRIBE_TEMPLATE,
-        TemplateData=json.dumps(template_data)
+    print('sending unsubscribe email', to_user)
+    message = Mail(
+        from_email=SOURCE_EMAIL,
+        to_emails=[To(to_user['email'])],
     )
+    message.dynamic_template_data = template_data
+    message.template_id = SENDGRID_UNSUBSCRIBE_TEMPLATE_ID
+
+    sendgrid_client = SendGridAPIClient(SENDGRID_API_KEY)
+    response = sendgrid_client.send(message)
 
     return send_response(status=200, body={"data":"Successfully sent unsubscribe email"})
     
 
-def send_ses_event_email(gathering, mail_list):
+def send_sendgrid_event_email(gathering, mail_list):
     """
         Description: Send an ses email to all users who are currently subscribed to the site.
         This is only for when NEW EVENTS are created, we want to notify all subscribed users of the newly created event.
@@ -232,19 +247,19 @@ def send_ses_event_email(gathering, mail_list):
         "start_time":f"{get_formatted_hour(gathering['date'])[:-2]}", #"7pm",
         "end_time":f"{get_formatted_hour(gathering['timeEnd'])}",#9pm
         "extra_details":f"{gathering['extraRequests']}",#"Food and drinks will be provided."
-        "unsubscribe_link":"http://localhost:3000/unsubscribe"#Direct them to unsubscribe portal
+        "unsubscribe_link":UNSUBSCRIBE_URL#Direct them to unsubscribe portal
     }
 
-
-    ses.send_templated_email(
-        Source=SOURCE_EMAIL,
-        Destination={
-            "ToAddresses":[SOURCE_EMAIL] #destination_addresses
-        },
-        ReplyToAddresses=[SOURCE_EMAIL],
-        Template=NOTIFY_TEMPLATE,
-        TemplateData=json.dumps(template_data)
+    message = Mail(
+        from_email=SOURCE_EMAIL,
+        to_emails=list(map(To, mail_list)),
     )
+    message.dynamic_template_data = template_data
+    message.template_id = SENDGRID_EVENT_TEMPLATE_ID
+
+    sendgrid_client = SendGridAPIClient(SENDGRID_API_KEY)
+    response = sendgrid_client.send(message)
+
 
 
 def event_notify():
@@ -260,7 +275,7 @@ def event_notify():
     for user in site_subscribers_response['Items']:
         email_list.append(user)
     
-    send_ses_event_email(gathering=gathering, mail_list=email_list)
+    send_sendgrid_event_email(gathering=gathering, mail_list=email_list)
 
     while "LastEvaluatedKey" in site_subscribers_response:
         email_list = []
@@ -272,7 +287,7 @@ def event_notify():
         for user in site_subscribers_response['Items']:
             email_list.append(user['email'])
         if len(email_list) > 0:
-            send_ses_event_email(gathering=gathering,mail_list=email_list)
+            send_sendgrid_event_email(gathering=gathering,mail_list=email_list)
     return send_response(status=200, body={"data":"successfully sent email?"})
 
 
@@ -305,7 +320,7 @@ def email_unsubscribe(event):
     # Fetch the user and check if they exist in the site subscribers table. If so, send them an email from here
     fetched_user = dynamodb.Table('ifawf-subscribers').query(**fetch_email_user_query)
     if len(fetched_user['Items']) != 0:
-        return send_ses_unsubscribe_email(to_user=fetched_user['Items'][0])
+        return send_sendgrid_unsubscribe_email(to_user=fetched_user['Items'][0])
     
 
     # IF the user does not have site subscription, check if they are subscribed to an event.
@@ -326,7 +341,7 @@ def email_unsubscribe(event):
         return send_response(status=204, body={"data":"User does not exist"})
     
     # Send the unsubscribe email to the user
-    return send_ses_unsubscribe_email(to_user=fetched_user['Item'])
+    return send_sendgrid_unsubscribe_email(to_user=fetched_user['Item'])
     
 
 
@@ -334,7 +349,8 @@ def email_unsubscribe(event):
 def email_subscribers(event,table):
     """
         Description: Grab all users from the desired table 'ifawf-event-subscribers' | 'ifawf-subscribers'
-        and send them a custom message provided in the body.
+        and send them a custom message provided in the body. This is used if you want to broadcast a message to 
+        people in the site. This is not an invitation.
     """
     subscribers_response = dynamodb.Table(table).scan(
         Limit=100
@@ -350,7 +366,8 @@ def email_subscribers(event,table):
 
     body=json.loads(event['body'])
 
-    send_ses_message_email(mail_list=email_list, email_message=body['message'], queryParam=queryParam)
+    send_sendgrid_broadcast_email(mail_list=email_list, email_message=body['message'], queryParam=queryParam)
+    
     # Paginate the body if there are still more emails to be sent out.
     while 'LastEvaluatedKey' in subscribers_response:
         email_list = []
@@ -363,7 +380,7 @@ def email_subscribers(event,table):
             email_list.append(user['email'])
         print(email_list)
         if len(email_list) > 0:
-            send_ses_message_email(mail_list=email_list, email_message=body['message'], queryParam=queryParam)
+            send_sendgrid_broadcast_email(mail_list=email_list, email_message=body['message'], queryParam=queryParam)
     
     return send_response(status=200, body={"data":"Successfully notified users!"})
 

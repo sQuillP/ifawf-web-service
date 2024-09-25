@@ -277,10 +277,11 @@ def get_subscriber_email(dateJoined):
 def handle_delete(event):
     """
         Description: When endpoint gets hit, we will remove a site subscriber from 
-        site and event notifications.
+        site and event notifications. I.E ALL email communications from indyfaithandworkforum.org
         * Get the users email
         * Query all channel tables using users email
         * Delete user in each table using email as a partition/sort key
+
     """
     body = json.loads(event['body'])
 
